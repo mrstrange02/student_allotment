@@ -121,6 +121,6 @@ with st.sidebar:
 st.markdown("""
 <hr>
 <p style="text-align:center; font-size:14px; color:gray;">
-Made with ❤️ using Streamlit | Intermediate Education Board Simulation
+Made by SPK with ❤️ using Streamlit 
 </p>
 """, unsafe_allow_html=True)
