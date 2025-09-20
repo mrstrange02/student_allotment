@@ -1,126 +1,80 @@
-import streamlit as st
 import pandas as pd
-from pathlib import Path
+import streamlit as st
 
-# -------------------------
-# Page setup
-# -------------------------
-st.set_page_config(
-    page_title="Student College Allocation System",
-    page_icon="🎓",
-    layout="wide"
-)
+# Load dataset
+df = pd.read_csv('healthy_foods_dataset_final2.csv')
 
-# -------------------------
-# Load the assignment CSV
-# -------------------------
-@st.cache_data
-def load_data():
-    path = Path("assignment_submission.csv")
-    return pd.read_csv(path) if path.exists() else pd.DataFrame()
+def segmented_budget_recommendations(total_budget, categories, sets=3):
+    # Budgets decreasing slightly per set (95%, 92.5%, 90%, etc.)
+    budgets = [
+        total_budget * (1 - i * 0.025)  # example percentages, tweak if desired
+        for i in range(sets)
+    ]
 
-data = load_data()
+    all_recommendations = []
+    used_items = set()
 
-# -------------------------
-# Header
-# -------------------------
+    for budget in budgets:
+        filtered = df[~df['Food Item'].isin(used_items) & df['Category'].isin(categories)].copy()
+        price_column = 'Price_HalfKG (₹/kg)'
+        filtered['nutrient_score'] = (filtered['Protein (g)'] + filtered['Fiber (g)']) / filtered[price_column]
+        filtered = filtered.sort_values(by='nutrient_score', ascending=False)
+
+        selected_rows = []
+        total_cost = 0
+        total_protein = 0
+        total_fiber = 0
+
+        for idx, row in filtered.iterrows():
+            cost = row[price_column]
+            if total_cost + cost <= budget:
+                selected_rows.append(row)
+                total_cost += cost
+                total_protein += row['Protein (g)'] / 2  # half kg nutrition approximation
+                total_fiber += row['Fiber (g)'] / 2
+                used_items.add(row['Food Item'])
+
+        recommended_df = pd.DataFrame(selected_rows)
+        all_recommendations.append({
+            'budget': budget,
+            'dataframe': recommended_df,
+            'total_cost': total_cost,
+            'total_protein': total_protein,
+            'total_fiber': total_fiber,
+        })
+
+    return all_recommendations
+
+# Streamlit UI
+
+st.title('Healthy Food Recommendation Based on Budget')
+
 st.markdown("""
-<div style="text-align: center; font-family: sans-serif; padding: 10px;">
-    <h1 style="color: #2E86C1;">🎓 Student College Allocation System</h1>
-    <p style="font-size:18px;">Enter your <b>UniqueID</b> below to check your allocation details and explore overall admission insights.</p>
-</div>
-""", unsafe_allow_html=True)
+Welcome! This app helps you find healthy food sets within your budget using half-kilogram pricing.
+Select your preferred food categories and budget to see optimized nutritious sets.
+""")
 
-# -------------------------
-# UniqueID Search
-# -------------------------
-uid = st.text_input("🔑 Enter Your UniqueID:", key="uid_input", max_chars=10).strip()
+budget = st.number_input('Enter your budget (₹)', min_value=1, value=1000)
+categories = st.multiselect('Select Food Categories', options=df['Category'].unique())
 
-if uid:
-    with st.spinner("🔍 Searching records..."):
-        try:
-            uid_num = int(uid)
-            result = data[data["uniqueid"] == uid_num]
+if st.button('Get Recommendations'):
+    if not categories:
+        st.warning('Please select at least one food category.')
+    else:
+        recs = segmented_budget_recommendations(budget, categories, sets=3)
+        for i, rec in enumerate(recs, 1):
+            st.subheader(f'Set {i} - Budget allocated: ₹{rec["budget"]:.2f}')
+            if not rec['dataframe'].empty:
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Cost (₹)", f"{rec['total_cost']:.2f}")
+                col2.metric("Total Protein (g)", f"{rec['total_protein']:.2f}")
+                col3.metric("Total Fiber (g)", f"{rec['total_fiber']:.2f}")
 
-            if not result.empty:
-                student = result.iloc[0]
-
-                # ✅ Success Message
-                st.success(f"✅ Allocation found for **{student['name']}** (Rank {student['rank']})")
-
-                col1, col2 = st.columns(2)
-
-                # Student details
-                with col1:
-                    st.subheader("👤 Student Profile")
-                    st.write(f"**UniqueID:** {student['uniqueid']}")
-                    st.write(f"**Name:** {student['name']}")
-                    st.write(f"**Gender:** {student['gender']}")
-                    st.write(f"**Caste/Category:** {student['caste']}")
-                    st.write(f"**Rank:** {student['rank']}")
-
-                # College details
-                with col2:
-                    st.subheader("🏫 College Allotment")
-                    if pd.notna(student['collegeid']):
-                        st.write(f"**Institution:** {student['institution']}")
-                        st.write(f"**College ID:** {student['collegeid']}")
-                        st.write(f"**Preference Order Used:** {student['prefnumber']}")
-                        # satisfaction check
-                        if student['prefnumber'] == 1:
-                            st.success("🎉 You got your **1st preference** college!")
-                        else:
-                            st.info(f"ℹ️ You were allotted your **{student['prefnumber']} preference**.")
-                    else:
-                        st.error("❌ No College Available for this student.")
-
+                st.dataframe(rec['dataframe'][['Food Item', 'Category', 'Price_HalfKG (₹/kg)', 'Protein (g)', 'Fiber (g)', 'Calories']].style.format({
+                    'Price_HalfKG (₹/kg)': '₹{:.2f}',
+                    'Protein (g)': '{:.2f}',
+                    'Fiber (g)': '{:.2f}',
+                    'Calories': '{:.0f}'
+                }))
             else:
-                st.error("No allocation found. Please check your UniqueID.")
-
-        except ValueError:
-            st.warning("⚠️ Please enter a valid numeric UniqueID.")
-
-else:
-    st.info("ℹ️ Please enter your UniqueID to view your result.")
-
-# -------------------------
-# Sidebar: Overall Insights
-# -------------------------
-with st.sidebar:
-    st.header("📊 Quick Stats")
-    if not data.empty:
-        total_students = len(data)
-        allocated = len(data[data["collegeid"].notna()])
-        unallocated = len(data[data["collegeid"].isna()])
-
-        st.metric("👥 Total Students", total_students)
-        st.metric("✅ Allocated Students", allocated)
-        st.metric("❌ Unallocated Students", unallocated)
-
-        st.divider()
-
-        # Category-wise allocation
-        st.subheader("🗂 Allocation by Category")
-        cat_alloc = data.groupby("caste")["collegeid"].apply(lambda x: x.notna().sum())
-        st.bar_chart(cat_alloc)
-
-        # Top colleges filled
-        st.subheader("🏫 Top 5 Colleges (by Allotments)")
-        top_colleges = (
-            data[data["collegeid"].notna()]
-            .groupby("institution")["uniqueid"]
-            .count()
-            .sort_values(ascending=False)
-            .head(5)
-        )
-        st.table(top_colleges)
-
-# -------------------------
-# Footer
-# -------------------------
-st.markdown("""
-<hr>
-<p style="text-align:center; font-size:14px; color:gray;">
-Made by SPK with ❤️ using Streamlit 
-</p>
-""", unsafe_allow_html=True)
+                st.info('No foods found within allocated budget.')
